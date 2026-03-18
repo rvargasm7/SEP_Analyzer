@@ -34,6 +34,9 @@ except ImportError:
     sys.exit(1)
 
 
+# ── CONFIG ────────────────────────────────────────────────────────────────────
+CLAUDE_MODEL = "claude-sonnet-4-20250514"
+
 # ── BASELINE (December 2025 SEP) ─────────────────────────────────────────────
 # Update this section after each SEP release becomes the new baseline.
 DECEMBER_BASELINE = {
@@ -440,7 +443,7 @@ Be direct, rapid, and specific. No hedging. Trader language.
 """
 
     response = client.messages.create(
-        model="claude-sonnet-4-6-20260318",
+        model=CLAUDE_MODEL,
         max_tokens=1000,
         messages=[{"role": "user", "content": context}]
     )
@@ -579,11 +582,20 @@ def analyze(text: str, source_label: str = "SEP", save: bool = True) -> None:
 
 
 def ensure_api_key():
-    """Prompt for the Anthropic API key if not already set."""
+    """Load API key from .env file, environment, or interactive prompt."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+        if os.path.isfile(env_path):
+            with open(env_path) as f:
+                key = f.read().strip()
+            if key:
+                os.environ["ANTHROPIC_API_KEY"] = key
+                return
+
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("─── API KEY REQUIRED ────────────────────────────────────")
         print("  The AI synthesis step needs your Anthropic API key.")
-        print("  It will NOT be stored — only used for this session.\n")
+        print("  Tip: put your key in a .env file to skip this prompt.\n")
         key = getpass.getpass("  Enter your ANTHROPIC_API_KEY: ")
         if not key.strip():
             print("\n  No key provided. AI synthesis will be skipped.")

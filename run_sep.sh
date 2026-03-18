@@ -7,6 +7,11 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$DIR"
 
+# Load API key: .env file → environment → interactive prompt
+if [ -z "$ANTHROPIC_API_KEY" ] && [ -f .env ]; then
+    export ANTHROPIC_API_KEY="$(cat .env | tr -d '[:space:]')"
+fi
+
 if [ -z "$ANTHROPIC_API_KEY" ]; then
     echo "─── API KEY REQUIRED ────────────────────────────────────"
     echo "  Enter your Anthropic API key (will not be displayed)."
@@ -23,6 +28,14 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
     echo ""
 fi
 
+# If the PDF already exists locally, skip polling and analyze immediately
+if [ -f "$PDF" ]; then
+    echo "Found $PDF locally. Running analyzer..."
+    echo ""
+    /opt/anaconda3/bin/python3 sep_analyzer.py "$PDF"
+    exit 0
+fi
+
 echo "Waiting for March 2026 SEP to drop..."
 echo "URL: $URL"
 echo "Checking every 30 seconds. Press Ctrl+C to stop."
@@ -36,7 +49,7 @@ while true; do
         curl -sL "$URL" -o "$PDF"
         echo "Saved to $PDF"
         echo ""
-        python3 sep_analyzer.py "$PDF"
+        /opt/anaconda3/bin/python3 sep_analyzer.py "$PDF"
         exit 0
     else
         echo "[$NOW] Not yet ($STATUS). Retrying in 30s..."
