@@ -8,9 +8,19 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
 if [ -z "$ANTHROPIC_API_KEY" ]; then
-    echo "ERROR: Set your API key first:"
-    echo "  export ANTHROPIC_API_KEY=sk-ant-..."
-    exit 1
+    echo "─── API KEY REQUIRED ────────────────────────────────────"
+    echo "  Enter your Anthropic API key (will not be displayed)."
+    echo "  It will NOT be stored — only used for this session."
+    echo ""
+    read -s -p "  ANTHROPIC_API_KEY: " ANTHROPIC_API_KEY
+    echo ""
+    if [ -z "$ANTHROPIC_API_KEY" ]; then
+        echo "  No key provided. Exiting."
+        exit 1
+    fi
+    export ANTHROPIC_API_KEY
+    echo "  Key set for this session."
+    echo ""
 fi
 
 echo "Waiting for March 2026 SEP to drop..."

@@ -16,6 +16,7 @@ import re
 import os
 import json
 import argparse
+import getpass
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -577,12 +578,28 @@ def analyze(text: str, source_label: str = "SEP", save: bool = True) -> None:
         save_run(reading, scores, analysis, source_label)
 
 
+def ensure_api_key():
+    """Prompt for the Anthropic API key if not already set."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("─── API KEY REQUIRED ────────────────────────────────────")
+        print("  The AI synthesis step needs your Anthropic API key.")
+        print("  It will NOT be stored — only used for this session.\n")
+        key = getpass.getpass("  Enter your ANTHROPIC_API_KEY: ")
+        if not key.strip():
+            print("\n  No key provided. AI synthesis will be skipped.")
+        else:
+            os.environ["ANTHROPIC_API_KEY"] = key.strip()
+            print("  Key set for this session.\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="SEP Analyzer — FOMC Projections Scanner")
     parser.add_argument("pdf", nargs="?", help="Path to SEP PDF file")
     parser.add_argument("--text", help="Raw text instead of PDF")
     parser.add_argument("--demo", action="store_true", help="Run with demo data")
     args = parser.parse_args()
+
+    ensure_api_key()
 
     if args.demo:
         analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP")
