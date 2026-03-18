@@ -1,0 +1,24 @@
+# API keys and secrets
+.env
+*.env
+.env.*
+
+# Claude Code local settings (may contain local permissions/paths)
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# PDFs (large binary files — download fresh via run_sep.sh)
+*.pdf
