@@ -17,6 +17,7 @@ import os
 import json
 import argparse
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
 
 try:
@@ -46,6 +47,78 @@ DECEMBER_BASELINE = {
     "unemployment_2027":     4.2,
     "cuts_implied_2026":     1,        # one 25bp cut projected for 2026
 }
+
+RUNS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs")
+
+
+def load_baseline() -> dict:
+    """
+    Load the most recent run as the baseline.
+    Falls back to DECEMBER_BASELINE if no prior runs exist.
+    """
+    if not os.path.isdir(RUNS_DIR):
+        return DECEMBER_BASELINE
+
+    run_dirs = sorted(
+        [d for d in os.listdir(RUNS_DIR)
+         if os.path.isfile(os.path.join(RUNS_DIR, d, "output.json"))],
+    )
+    if not run_dirs:
+        return DECEMBER_BASELINE
+
+    latest = os.path.join(RUNS_DIR, run_dirs[-1], "output.json")
+    with open(latest) as f:
+        data = json.load(f)
+
+    baseline = data.get("baseline_snapshot", {})
+    if not baseline:
+        return DECEMBER_BASELINE
+
+    print(f"  Using prior run as baseline: runs/{run_dirs[-1]}/")
+    return baseline
+
+
+def save_run(reading, scores: dict, analysis_text: str, source_label: str) -> str:
+    """
+    Save current run output to runs/YYYY-MM-DD_HHMMSS/.
+    Returns the path to the saved directory.
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    run_dir = os.path.join(RUNS_DIR, timestamp)
+    os.makedirs(run_dir, exist_ok=True)
+
+    # Snapshot of extracted numbers — this becomes the next run's baseline
+    baseline_snapshot = {}
+    for key in [
+        "fed_funds_median_2026", "fed_funds_median_2027", "fed_funds_longer_run",
+        "gdp_2026", "gdp_2027", "core_pce_2026", "core_pce_2027",
+        "unemployment_2026", "unemployment_2027",
+    ]:
+        val = getattr(reading, key, None)
+        if val is not None:
+            baseline_snapshot[key] = val
+
+    output = {
+        "timestamp": timestamp,
+        "source": source_label,
+        "baseline_snapshot": baseline_snapshot,
+        "scores": {k: v for k, v in scores.items() if k != "TOTAL"},
+        "total_score": scores["TOTAL"],
+        "keyword_hits": {
+            "hawkish": reading.hawkish_hits,
+            "dovish": reading.dovish_hits,
+            "hike": reading.hike_hits,
+        },
+        "ai_analysis": analysis_text,
+    }
+
+    out_path = os.path.join(run_dir, "output.json")
+    with open(out_path, "w") as f:
+        json.dump(output, f, indent=2)
+
+    print(f"\n  Run saved to: runs/{timestamp}/output.json")
+    return run_dir
+
 
 # ── KEYWORD DICTIONARIES ──────────────────────────────────────────────────────
 HAWKISH_PHRASES = [
@@ -262,14 +335,14 @@ def scan_keywords(text: str) -> dict:
 
 
 # ── DELTA SCORER ─────────────────────────────────────────────────────────────
-def score_deltas(reading: SEPReading) -> dict:
+def score_deltas(reading: SEPReading, baseline: dict) -> dict:
     """
-    Compare each extracted metric to December baseline.
+    Compare each extracted metric to the previous baseline.
     Returns a score dict with individual component signals.
     Positive score = bullish (market-friendly), negative = bearish.
     """
     scores = {}
-    b = DECEMBER_BASELINE
+    b = baseline
 
     def safe_delta(new_val, baseline_key, direction="lower_is_bullish"):
         if new_val is None:
@@ -279,7 +352,7 @@ def score_deltas(reading: SEPReading) -> dict:
             score = -delta * 10  # negative delta = bullish
         else:
             score = delta * 10
-        return round(score, 2), f"{'+' if delta>0 else ''}{delta:.2f} vs Dec baseline"
+        return round(score, 2), f"{'+' if delta>0 else ''}{delta:.2f} vs prev baseline"
 
     # Fed funds rate: lower = bullish (more cuts expected)
     s, note = safe_delta(reading.fed_funds_median_2026, "fed_funds_median_2026", "lower_is_bullish")
@@ -321,7 +394,7 @@ def score_deltas(reading: SEPReading) -> dict:
 
 
 # ── CLAUDE SYNTHESIS ──────────────────────────────────────────────────────────
-def synthesize_with_claude(reading: SEPReading, scores: dict, raw_text: str) -> str:
+def synthesize_with_claude(reading: SEPReading, scores: dict, raw_text: str, baseline: dict) -> str:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return "[Set ANTHROPIC_API_KEY env variable for AI synthesis]"
@@ -331,8 +404,8 @@ def synthesize_with_claude(reading: SEPReading, scores: dict, raw_text: str) -> 
     context = f"""
 You are a macro trader reading the Fed's Summary of Economic Projections (SEP) the moment it drops.
 
-DECEMBER 2025 BASELINE (previous SEP):
-{json.dumps(DECEMBER_BASELINE, indent=2)}
+PREVIOUS SEP BASELINE:
+{json.dumps(baseline, indent=2)}
 
 EXTRACTED FROM TODAY'S SEP:
 Dot plot median 2026: {reading.fed_funds_median_2026}
@@ -419,10 +492,14 @@ driven by energy passthrough effects and continued stickiness in services prices
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def analyze(text: str, source_label: str = "SEP") -> None:
+def analyze(text: str, source_label: str = "SEP", save: bool = True) -> None:
     print(f"\n{'='*60}")
     print(f"  SEP ANALYZER — {source_label}")
     print(f"{'='*60}\n")
+
+    # Load baseline (most recent prior run, or December 2025 fallback)
+    print("► Loading baseline...")
+    baseline = load_baseline()
 
     # Parse numbers
     print("► Parsing structured data...")
@@ -447,22 +524,22 @@ def analyze(text: str, source_label: str = "SEP") -> None:
     )
 
     # Score
-    print("► Scoring deltas vs December baseline...")
-    scores = score_deltas(reading)
+    print("► Scoring deltas vs previous baseline...")
+    scores = score_deltas(reading, baseline)
 
     # Print extracted numbers
     print("\n─── EXTRACTED NUMBERS ───────────────────────────────────")
     fields = [
-        ("Fed funds median 2026", reading.fed_funds_median_2026, "Dec: 3.625%"),
-        ("Longer run rate",       reading.fed_funds_longer_run,  "Dec: 3.0%"),
-        ("GDP 2026",              reading.gdp_2026,               "Dec: 2.3%"),
-        ("Core PCE 2026",         reading.core_pce_2026,          "Dec: 2.5%"),
-        ("Unemployment 2026",     reading.unemployment_2026,      "Dec: 4.4%"),
-        ("Hike dots detected",    reading.dots_hike_count,        "Dec: 0"),
+        ("Fed funds median 2026", reading.fed_funds_median_2026, f"Prev: {baseline.get('fed_funds_median_2026', '?')}"),
+        ("Longer run rate",       reading.fed_funds_longer_run,  f"Prev: {baseline.get('fed_funds_longer_run', '?')}"),
+        ("GDP 2026",              reading.gdp_2026,               f"Prev: {baseline.get('gdp_2026', '?')}"),
+        ("Core PCE 2026",         reading.core_pce_2026,          f"Prev: {baseline.get('core_pce_2026', '?')}"),
+        ("Unemployment 2026",     reading.unemployment_2026,      f"Prev: {baseline.get('unemployment_2026', '?')}"),
+        ("Hike dots detected",    reading.dots_hike_count,        "Prev: 0"),
     ]
-    for label, val, baseline in fields:
+    for label, val, prev in fields:
         val_str = f"{val}%" if val is not None else "NOT FOUND"
-        print(f"  {label:<28} {val_str:<12} ({baseline})")
+        print(f"  {label:<28} {val_str:<12} ({prev})")
 
     # Print keyword hits
     print("\n─── KEYWORD SIGNALS ─────────────────────────────────────")
@@ -471,7 +548,7 @@ def analyze(text: str, source_label: str = "SEP") -> None:
     print(f"  Hike    ({len(reading.hike_hits)}):  {', '.join(reading.hike_hits) or 'none'}")
 
     # Print scores
-    print("\n─── DELTA SCORES vs DEC BASELINE ───────────────────────")
+    print("\n─── DELTA SCORES vs PREVIOUS BASELINE ──────────────────")
     for key, val in scores.items():
         if key == "TOTAL":
             continue
@@ -490,10 +567,14 @@ def analyze(text: str, source_label: str = "SEP") -> None:
 
     # Claude synthesis
     print("► Running AI synthesis...\n")
-    analysis = synthesize_with_claude(reading, scores, text)
+    analysis = synthesize_with_claude(reading, scores, text, baseline)
     print("─── TRADER DESK ANALYSIS ────────────────────────────────")
     print(analysis)
     print(f"\n{'='*60}\n")
+
+    # Save run
+    if save:
+        save_run(reading, scores, analysis, source_label)
 
 
 def main():

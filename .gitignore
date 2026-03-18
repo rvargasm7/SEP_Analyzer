@@ -22,3 +22,6 @@ Thumbs.db
 
 # PDFs (large binary files — download fresh via run_sep.sh)
 *.pdf
+
+# Local run history (machine-specific analysis outputs)
+runs/
