@@ -17,25 +17,146 @@ import os
 import json
 import argparse
 import getpass
+import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
-
-try:
-    import pdfplumber
-except ImportError:
-    print("Run: pip install pdfplumber anthropic")
-    sys.exit(1)
-
-try:
-    import anthropic
-except ImportError:
-    print("Run: pip install anthropic")
-    sys.exit(1)
-
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
+
+# ── SEP DISCOVERY ─────────────────────────────────────────────────────────────
+# The Fed releases a Summary of Economic Projections at the March, June,
+# September, and December FOMC meetings. These are two-day meetings; the
+# SEP drops on the final day.
+SEP_MONTHS = {3, 6, 9, 12}
+
+MONTH_NAMES = {
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "may": 5, "june": 6, "july": 7, "august": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12,
+}
+
+# Hardcoded fallback — used only when the live calendar page can't be
+# fetched or parsed. Update this list each time the Fed publishes a new
+# year's FOMC schedule. Each date is the final day of a two-day SEP meeting.
+SEP_FALLBACK_DATES = [
+    date(2026, 3, 18),
+    date(2026, 6, 17),
+    date(2026, 9, 16),
+    date(2026, 12, 9),
+    date(2027, 3, 17),
+    date(2027, 6, 9),
+    date(2027, 9, 15),
+    date(2027, 12, 8),
+]
+
+CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+
+
+def _parse_next_sep_date(html: str, today: date) -> Optional[date]:
+    """
+    Parse the Fed's FOMC calendar HTML and return the earliest SEP-producing
+    meeting date that is on or after `today`.
+
+    SEP-producing meetings happen in March, June, September, and December.
+    The Fed renders each meeting as paired <div> elements: a month div
+    (containing <strong>MonthName</strong>) followed by a date div (e.g.
+    "17-18*"). The SEP drops on the final day of the two-day meeting.
+
+    Returns None when html is empty or no future SEP date can be found.
+    """
+    if not html:
+        return None
+
+    # Locate every year heading and use its position to bound that year's
+    # block. The HTML lists years in descending order (most recent first).
+    year_heading = re.compile(
+        r"(\d{4})\s*FOMC\s*Meetings", re.IGNORECASE
+    )
+    year_matches = list(year_heading.finditer(html))
+    if not year_matches:
+        return None
+
+    # Match a month div directly followed (within the same fomc-meeting row)
+    # by a date div whose text starts with "DD-DD" (allowing trailing chars
+    # like "*" or footnote markers).
+    pair_pattern = re.compile(
+        r'fomc-meeting__month[^>]*>\s*<strong>([A-Za-z/]+)</strong>\s*</div>'
+        r'(?:(?!fomc-meeting__month).)*?'
+        r'fomc-meeting__date[^>]*>\s*(\d{1,2})\s*[-–]\s*(\d{1,2})',
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    candidates = []
+    for i, ym in enumerate(year_matches):
+        try:
+            year = int(ym.group(1))
+        except ValueError:
+            continue
+        block_start = ym.end()
+        block_end = year_matches[i + 1].start() if i + 1 < len(year_matches) else len(html)
+        block = html[block_start:block_end]
+
+        for pm in pair_pattern.finditer(block):
+            month_name = pm.group(1).strip().lower()
+            month_num = MONTH_NAMES.get(month_name)
+            if month_num is None or month_num not in SEP_MONTHS:
+                continue
+            try:
+                day = int(pm.group(3))  # second day of two-day meeting
+            except ValueError:
+                continue
+            try:
+                meeting_date = date(year, month_num, day)
+            except ValueError:
+                continue
+            if meeting_date >= today:
+                candidates.append(meeting_date)
+
+    if not candidates:
+        return None
+    return min(candidates)
+
+
+def _fetch_calendar_html(url: str = CALENDAR_URL, timeout: float = 10.0) -> str:
+    """Fetch the Fed FOMC calendar page. Raises OSError on network error."""
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "SEP-Analyzer/1.0 (+sep_analyzer.py)"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def fetch_next_sep(today=None):
+    """
+    Return the next SEP-producing FOMC meeting date (today or later).
+
+    Tries the live Fed calendar first. On fetch failure, parse failure,
+    or an empty parse result, falls back to SEP_FALLBACK_DATES. If the
+    fallback is also exhausted, raises RuntimeError.
+    """
+    if today is None:
+        today = date.today()
+
+    try:
+        html = _fetch_calendar_html()
+        parsed = _parse_next_sep_date(html, today)
+        if parsed is not None:
+            return parsed
+    except (OSError, ValueError):
+        pass
+
+    for d in SEP_FALLBACK_DATES:
+        if d >= today:
+            return d
+
+    raise RuntimeError(
+        "No future SEP meeting found. Update SEP_FALLBACK_DATES in "
+        "sep_analyzer.py with the next year's FOMC schedule."
+    )
+
 
 # ── BASELINE (December 2025 SEP) ─────────────────────────────────────────────
 # Update this section after each SEP release becomes the new baseline.
@@ -201,6 +322,11 @@ class SEPReading:
 
 # ── PDF EXTRACTION ────────────────────────────────────────────────────────────
 def extract_pdf_text(path: str) -> str:
+    try:
+        import pdfplumber
+    except ImportError:
+        print("pdfplumber not installed. Run: pip install pdfplumber")
+        sys.exit(1)
     text_parts = []
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
@@ -351,7 +477,10 @@ def score_deltas(reading: SEPReading, baseline: dict) -> dict:
     def safe_delta(new_val, baseline_key, direction="lower_is_bullish"):
         if new_val is None:
             return 0, "not found"
-        delta = new_val - b[baseline_key]
+        prev = b.get(baseline_key)
+        if prev is None:
+            return 0, "no prior baseline"
+        delta = new_val - prev
         if direction == "lower_is_bullish":
             score = -delta * 10  # negative delta = bullish
         else:
@@ -398,12 +527,31 @@ def score_deltas(reading: SEPReading, baseline: dict) -> dict:
 
 
 # ── CLAUDE SYNTHESIS ──────────────────────────────────────────────────────────
-def synthesize_with_claude(reading: SEPReading, scores: dict, raw_text: str, baseline: dict) -> str:
+def synthesize_with_claude(
+    reading: SEPReading,
+    scores: dict,
+    raw_text: str,
+    baseline: dict,
+    tickers: Optional[list] = None,
+) -> str:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return "[Set ANTHROPIC_API_KEY env variable for AI synthesis]"
 
+    try:
+        import anthropic
+    except ImportError:
+        return "[anthropic package not installed — run: pip install anthropic]"
+
     client = anthropic.Anthropic(api_key=api_key)
+
+    if tickers:
+        portfolio_line = (
+            f"5. PORTFOLIO IMPLICATIONS: specific to a speculative portfolio with positions in "
+            f"{', '.join(tickers)}"
+        )
+    else:
+        portfolio_line = "5. PORTFOLIO IMPLICATIONS: general equity, rates, and FX positioning"
 
     context = f"""
 You are a macro trader reading the Fed's Summary of Economic Projections (SEP) the moment it drops.
@@ -436,17 +584,20 @@ Provide a rapid trading-desk analysis:
 2. CONFIDENCE: percentage
 3. TOP 3 SIGNALS: the three most market-moving things in this SEP
 4. IMMEDIATE IMPACT: what happens to S&P, 10Y yield, dollar, and gold in the next 60 minutes
-5. PORTFOLIO IMPLICATIONS: specific to a speculative portfolio with positions in NFE, USAR, GRAB, NET, FSLY, NVO, CLSK, UAMY
+{portfolio_line}
 6. WATCH LIST: one sentence on what to monitor in Powell's press conference
 
 Be direct, rapid, and specific. No hedging. Trader language.
 """
 
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=1000,
-        messages=[{"role": "user", "content": context}]
-    )
+    try:
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=1000,
+            messages=[{"role": "user", "content": context}]
+        )
+    except Exception as e:
+        return f"[AI synthesis failed: {type(e).__name__}: {e}. Parsed numbers and scores above are still valid.]"
     return response.content[0].text
 
 
@@ -496,7 +647,12 @@ driven by energy passthrough effects and continued stickiness in services prices
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def analyze(text: str, source_label: str = "SEP", save: bool = True) -> None:
+def analyze(
+    text: str,
+    source_label: str = "SEP",
+    save: bool = True,
+    tickers: Optional[list] = None,
+) -> None:
     print(f"\n{'='*60}")
     print(f"  SEP ANALYZER — {source_label}")
     print(f"{'='*60}\n")
@@ -569,16 +725,26 @@ def analyze(text: str, source_label: str = "SEP", save: bool = True) -> None:
     print(f"  SIGNAL:          {verdict_color} {verdict}")
     print(f"{'─'*55}\n")
 
+    # Save the parsed reading + scores BEFORE the network call, so a crash
+    # or SIGKILL during AI synthesis doesn't throw away the extraction work.
+    if save:
+        run_dir = save_run(reading, scores, "[pending AI synthesis]", source_label)
+
     # Claude synthesis
     print("► Running AI synthesis...\n")
-    analysis = synthesize_with_claude(reading, scores, text, baseline)
+    analysis = synthesize_with_claude(reading, scores, text, baseline, tickers=tickers)
     print("─── TRADER DESK ANALYSIS ────────────────────────────────")
     print(analysis)
     print(f"\n{'='*60}\n")
 
-    # Save run
+    # Update the saved run with the completed analysis.
     if save:
-        save_run(reading, scores, analysis, source_label)
+        out_path = os.path.join(run_dir, "output.json")
+        with open(out_path) as f:
+            saved = json.load(f)
+        saved["ai_analysis"] = analysis
+        with open(out_path, "w") as f:
+            json.dump(saved, f, indent=2)
 
 
 def ensure_api_key():
@@ -609,15 +775,30 @@ def main():
     parser.add_argument("pdf", nargs="?", help="Path to SEP PDF file")
     parser.add_argument("--text", help="Raw text instead of PDF")
     parser.add_argument("--demo", action="store_true", help="Run with demo data")
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="Print next SEP date (NOT_TODAY <date>) or poll URL (POLL <url> <filename>) and exit",
+    )
+    parser.add_argument(
+        "--tickers",
+        help="Comma-separated tickers for portfolio implications (e.g. SPY,TLT,NVDA). "
+             "If omitted, AI gives general positioning.",
+    )
     args = parser.parse_args()
+    tickers = [t.strip() for t in args.tickers.split(",")] if args.tickers else None
+
+    if args.discover:
+        _discover_command()
+        return
 
     ensure_api_key()
 
     if args.demo:
-        analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP")
+        analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP", tickers=tickers)
 
     elif args.text:
-        analyze(args.text, "PASTED TEXT")
+        analyze(args.text, "PASTED TEXT", tickers=tickers)
 
     elif args.pdf:
         if not os.path.exists(args.pdf):
@@ -628,12 +809,33 @@ def main():
         if not text.strip():
             print("Could not extract text from PDF. Try --text with copy-pasted content.")
             sys.exit(1)
-        analyze(text, args.pdf)
+        analyze(text, args.pdf, tickers=tickers)
 
     else:
         print(__doc__)
         print("\nRunning demo mode...\n")
-        analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP")
+        analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP", tickers=tickers)
+
+
+def _discover_command() -> None:
+    """Print a single-line directive for run_sep.sh and exit."""
+    try:
+        next_date = fetch_next_sep()
+    except RuntimeError as e:
+        print(f"DISCOVERY_ERROR {e}", file=sys.stderr)
+        sys.exit(2)
+
+    today = date.today()
+    if next_date == today:
+        yyyymmdd = next_date.strftime("%Y%m%d")
+        url = (
+            "https://www.federalreserve.gov/monetarypolicy/files/"
+            f"fomcprojtabl{yyyymmdd}.pdf"
+        )
+        filename = f"sep_{yyyymmdd}.pdf"
+        print(f"POLL {url} {filename}")
+    else:
+        print(f"NOT_TODAY {next_date.isoformat()}")
 
 
 if __name__ == "__main__":

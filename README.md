@@ -1,6 +1,11 @@
 # SEP Analyzer
 
-FOMC Summary of Economic Projections scanner. Drop a Fed SEP PDF in, get a bullish/bearish verdict with trader-desk commentary powered by Claude.
+FOMC Summary of Economic Projections scanner. Point it at the Fed's SEP PDF (or let it auto-discover the next release date) and get a bullish/bearish verdict with trader-desk commentary powered by Claude.
+
+## Requirements
+
+- Python 3.10+
+- An [Anthropic API key](https://console.anthropic.com/) (only needed for AI synthesis; parsing and scoring work without it)
 
 ## Quick Start
 
@@ -8,50 +13,56 @@ FOMC Summary of Economic Projections scanner. Drop a Fed SEP PDF in, get a bulli
 pip install -r requirements.txt
 ```
 
-Create a `.env` file with your Anthropic API key:
+Create a `.env` file with your Anthropic API key (just the raw key, no variable name):
 
 ```
 sk-ant-your-key-here
 ```
 
-Run it:
+Then run it:
 
 ```bash
 ./run_sep.sh
 ```
 
-That's it. One command. The script loads your key from `.env`, detects the PDF locally (or polls the Fed website until it drops), parses the SEP, and delivers the full analysis.
+The script auto-discovers the next FOMC meeting date from the Fed's calendar page:
+- On a non-meeting day: prints the next SEP release date and exits.
+- On release day: polls the Fed site every 30s until the PDF drops, then downloads and analyzes it.
 
 ## What It Does
 
-1. Extracts text from the SEP PDF
+1. Extracts text from the SEP PDF (via `pdfplumber`)
 2. Parses key projections: fed funds rate, GDP, Core PCE, unemployment
 3. Compares them to the **previous SEP baseline** (auto-loaded from your last run)
 4. Scans for hawkish/dovish/hike keywords
 5. Computes a composite delta score
 6. Sends everything to Claude for a rapid trader-desk analysis with verdict, confidence, and portfolio implications
 
-## Auto-Baseline (runs/)
-
-Each run saves its output to a local `runs/` folder (e.g. `runs/2026-03-18_170934/output.json`). The next time you run the analyzer, it automatically loads the most recent run as the comparison baseline — no manual editing needed.
-
-- First run: uses the hardcoded December 2025 SEP as baseline
-- Every run after: uses your most recent prior run
-- Full history accumulates in `runs/` so you can track how projections shift over time
-
-The `runs/` folder is gitignored (local to your machine).
-
 ## Usage
 
-### One command (recommended)
+### Normal run (auto-discover + poll)
 
 ```bash
 ./run_sep.sh
 ```
 
-If the PDF already exists locally, it skips polling and runs the analysis immediately. If not, it polls the Fed website every 30 seconds until the PDF drops, then downloads and analyzes it automatically.
+### Demo mode (no network, no PDF, no real API call needed for parsing)
 
-### Analyze a specific PDF
+Useful for showing the pipeline end-to-end against mock SEP text:
+
+```bash
+./run_sep.sh --demo
+```
+
+### Custom portfolio tickers
+
+Threaded through to the AI synthesis prompt so portfolio implications are tailored to your positions:
+
+```bash
+./run_sep.sh --demo --tickers SPY,TLT,NVDA
+```
+
+### Analyze a specific PDF directly
 
 ```bash
 python sep_analyzer.py path/to/sep.pdf
@@ -63,21 +74,33 @@ python sep_analyzer.py path/to/sep.pdf
 python sep_analyzer.py --text "paste raw SEP text here"
 ```
 
-### Demo mode (no PDF or API key needed)
+### Just discover the next release date (no download, no analysis)
 
 ```bash
-python sep_analyzer.py --demo
+python sep_analyzer.py --discover
 ```
+
+Prints `NOT_TODAY <date>` or `POLL <url> <filename>`.
+
+## Auto-Baseline (`runs/`)
+
+Each run saves its output to a local `runs/` folder (e.g. `runs/2026-03-18_170934/output.json`). The next run loads the most recent prior output as the comparison baseline — no manual editing needed.
+
+- First run: uses the hardcoded December 2025 SEP as baseline
+- Every run after: uses your most recent prior run
+- Full history accumulates in `runs/` so you can track how projections shift over time
+
+`runs/` is gitignored (local to your machine).
 
 ## API Key
 
 The key is loaded in this order:
 
-1. `.env` file in the project directory (just the raw key, no `export` or variable name)
+1. `.env` file in the project directory (raw key only)
 2. `ANTHROPIC_API_KEY` environment variable
 3. Interactive prompt at runtime (input is hidden)
 
-If no key is provided, the analysis still runs — only the AI synthesis step is skipped.
+If no key is provided, parsing and scoring still run — only the AI synthesis step is skipped or reports the error inline.
 
 ## Output
 
@@ -94,6 +117,14 @@ TRADER DESK ANALYSIS
 6. WATCH LIST: ...
 ```
 
+## Tests
+
+```bash
+python -m pytest tests/ -q
+```
+
+Covers the parser (table + prose extraction), scoring (baseline handling, delta direction, keyword math), and the FOMC calendar discovery flow.
+
 ## Configuration
 
 The Claude model is set at the top of `sep_analyzer.py`:
@@ -106,6 +137,10 @@ Update this when a newer model is available.
 
 ## Security
 
-- API key is **never hardcoded** — loaded from `.env` file, environment variable, or interactive prompt
-- `.env` files, PDFs, local run data, and `.claude/` settings are all gitignored
+- API key is **never hardcoded** — loaded from `.env`, env var, or interactive prompt
+- `.env`, PDFs, local run data, and `.claude/` settings are all gitignored
 - The key only lives in memory for the duration of the session
+
+## License
+
+MIT — see [LICENSE](LICENSE).
