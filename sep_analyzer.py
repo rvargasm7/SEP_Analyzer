@@ -65,6 +65,71 @@ SEP_FALLBACK_DATES = [
 
 CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 
+
+def _parse_next_sep_date(html: str, today: date) -> Optional[date]:
+    """
+    Parse the Fed's FOMC calendar HTML and return the earliest SEP-producing
+    meeting date that is on or after `today`.
+
+    SEP-producing meetings happen in March, June, September, and December.
+    The Fed renders each meeting as paired <div> elements: a month div
+    (containing <strong>MonthName</strong>) followed by a date div (e.g.
+    "17-18*"). The SEP drops on the final day of the two-day meeting.
+
+    Returns None when html is empty or no future SEP date can be found.
+    """
+    if not html:
+        return None
+
+    # Locate every year heading and use its position to bound that year's
+    # block. The HTML lists years in descending order (most recent first).
+    year_heading = re.compile(
+        r"(\d{4})\s*FOMC\s*Meetings", re.IGNORECASE
+    )
+    year_matches = list(year_heading.finditer(html))
+    if not year_matches:
+        return None
+
+    # Match a month div directly followed (within the same fomc-meeting row)
+    # by a date div whose text starts with "DD-DD" (allowing trailing chars
+    # like "*" or footnote markers).
+    pair_pattern = re.compile(
+        r'fomc-meeting__month[^>]*>\s*<strong>([A-Za-z/]+)</strong>\s*</div>'
+        r'.*?fomc-meeting__date[^>]*>\s*(\d{1,2})\s*[-–]\s*(\d{1,2})',
+        re.DOTALL | re.IGNORECASE,
+    )
+
+    candidates = []
+    for i, ym in enumerate(year_matches):
+        try:
+            year = int(ym.group(1))
+        except ValueError:
+            continue
+        block_start = ym.end()
+        block_end = year_matches[i + 1].start() if i + 1 < len(year_matches) else len(html)
+        block = html[block_start:block_end]
+
+        for pm in pair_pattern.finditer(block):
+            month_name = pm.group(1).strip().lower()
+            month_num = MONTH_NAMES.get(month_name)
+            if month_num is None or month_num not in SEP_MONTHS:
+                continue
+            try:
+                day = int(pm.group(3))  # second day of two-day meeting
+            except ValueError:
+                continue
+            try:
+                meeting_date = date(year, month_num, day)
+            except ValueError:
+                continue
+            if meeting_date >= today:
+                candidates.append(meeting_date)
+
+    if not candidates:
+        return None
+    return min(candidates)
+
+
 # ── BASELINE (December 2025 SEP) ─────────────────────────────────────────────
 # Update this section after each SEP release becomes the new baseline.
 DECEMBER_BASELINE = {
