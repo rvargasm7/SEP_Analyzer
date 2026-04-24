@@ -56,10 +56,11 @@ Useful for showing the pipeline end-to-end against mock SEP text:
 
 ### Custom portfolio tickers
 
-Threaded through to the AI synthesis prompt so portfolio implications are tailored to your positions:
+Threaded through to the AI synthesis prompt so portfolio implications are tailored to your positions. Works with demo mode and with real runs:
 
 ```bash
 ./run_sep.sh --demo --tickers SPY,TLT,NVDA
+./run_sep.sh --tickers SPY,TLT,NVDA         # applied once the PDF is downloaded
 ```
 
 ### Analyze a specific PDF directly

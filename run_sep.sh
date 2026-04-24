@@ -90,10 +90,11 @@ case "$VERB" in
 esac
 
 # If the PDF already exists locally, skip polling and analyze immediately.
+# "$@" forwards any extra args (e.g. --tickers SPY,TLT,NVDA) to the analyzer.
 if [ -f "$PDF" ]; then
     echo "Found $PDF locally. Running analyzer..."
     echo ""
-    "$PYTHON" sep_analyzer.py "$PDF"
+    "$PYTHON" sep_analyzer.py "$PDF" "$@"
     exit 0
 fi
 
@@ -110,7 +111,7 @@ while true; do
         curl -sL "$URL" -o "$PDF"
         echo "Saved to $PDF"
         echo ""
-        "$PYTHON" sep_analyzer.py "$PDF"
+        "$PYTHON" sep_analyzer.py "$PDF" "$@"
         exit 0
     else
         echo "[$NOW] Not yet ($STATUS). Retrying in 30s..."
