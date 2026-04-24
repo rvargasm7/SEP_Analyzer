@@ -404,7 +404,7 @@ def synthesize_with_claude(reading: SEPReading, scores: dict, raw_text: str, bas
         return "[Set ANTHROPIC_API_KEY env variable for AI synthesis]"
 
     client = anthropic.Anthropic(api_key=api_key)
-
+# One thing to note. In line 439 Portfolio Implications: (Switch to your ticker list if you want them analyzed)
     context = f"""
 You are a macro trader reading the Fed's Summary of Economic Projections (SEP) the moment it drops.
 
@@ -436,7 +436,7 @@ Provide a rapid trading-desk analysis:
 2. CONFIDENCE: percentage
 3. TOP 3 SIGNALS: the three most market-moving things in this SEP
 4. IMMEDIATE IMPACT: what happens to S&P, 10Y yield, dollar, and gold in the next 60 minutes
-5. PORTFOLIO IMPLICATIONS: specific to a speculative portfolio with positions in NFE, USAR, GRAB, NET, FSLY, NVO, CLSK, UAMY
+5. PORTFOLIO IMPLICATIONS: specific to a speculative portfolio with positions in USAR, TGT, SPY, TLT, UPS, XOM, NVDA, META
 6. WATCH LIST: one sentence on what to monitor in Powell's press conference
 
 Be direct, rapid, and specific. No hedging. Trader language.
