@@ -1,11 +1,12 @@
 #!/bin/bash
-# Polls for the March 2026 SEP PDF and runs the analyzer when it drops.
+# Polls for the next FOMC SEP PDF and runs the analyzer when it drops.
+# The next meeting date is discovered at run time from the Fed's FOMC
+# calendar page. On non-meeting days, prints the next date and exits.
 
-URL="https://www.federalreserve.gov/monetarypolicy/files/fomcprojtabl20260318.pdf"
-PDF="sep_march2026.pdf"
 DIR="$(cd "$(dirname "$0")" && pwd)"
-
 cd "$DIR"
+
+PYTHON="/opt/anaconda3/bin/python3"
 
 # Load API key: .env file → environment → interactive prompt
 if [ -z "$ANTHROPIC_API_KEY" ] && [ -f .env ]; then
@@ -28,15 +29,45 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
     echo ""
 fi
 
-# If the PDF already exists locally, skip polling and analyze immediately
+# Discover the next SEP-producing FOMC meeting.
+# sep_analyzer.py --discover prints exactly one of:
+#   NOT_TODAY 2026-06-17
+#   POLL <url> <filename>
+DISCOVERY="$("$PYTHON" sep_analyzer.py --discover)"
+DISCOVERY_STATUS=$?
+if [ $DISCOVERY_STATUS -ne 0 ] || [ -z "$DISCOVERY" ]; then
+    echo "Discovery failed (exit $DISCOVERY_STATUS). Check your network."
+    echo "Output: $DISCOVERY"
+    exit 1
+fi
+
+read -r VERB ARG1 ARG2 <<< "$DISCOVERY"
+
+case "$VERB" in
+    NOT_TODAY)
+        echo "Next SEP release: $ARG1"
+        echo "Run this script again on that day to download and analyze."
+        exit 0
+        ;;
+    POLL)
+        URL="$ARG1"
+        PDF="$ARG2"
+        ;;
+    *)
+        echo "Unexpected discovery output: $DISCOVERY"
+        exit 1
+        ;;
+esac
+
+# If the PDF already exists locally, skip polling and analyze immediately.
 if [ -f "$PDF" ]; then
     echo "Found $PDF locally. Running analyzer..."
     echo ""
-    /opt/anaconda3/bin/python3 sep_analyzer.py "$PDF"
+    "$PYTHON" sep_analyzer.py "$PDF"
     exit 0
 fi
 
-echo "Waiting for March 2026 SEP to drop..."
+echo "Waiting for SEP to drop..."
 echo "URL: $URL"
 echo "Checking every 30 seconds. Press Ctrl+C to stop."
 echo ""
@@ -49,7 +80,7 @@ while true; do
         curl -sL "$URL" -o "$PDF"
         echo "Saved to $PDF"
         echo ""
-        /opt/anaconda3/bin/python3 sep_analyzer.py "$PDF"
+        "$PYTHON" sep_analyzer.py "$PDF"
         exit 0
     else
         echo "[$NOW] Not yet ($STATUS). Retrying in 30s..."
