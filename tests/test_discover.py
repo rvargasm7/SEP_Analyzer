@@ -2,6 +2,7 @@
 import unittest
 from datetime import date
 import os
+from unittest.mock import patch
 
 FIXTURE_PATH = os.path.join(
     os.path.dirname(__file__), "fixtures", "fomccalendars.htm"
@@ -56,6 +57,45 @@ class TestParser(unittest.TestCase):
         from sep_analyzer import _parse_next_sep_date
         result = _parse_next_sep_date(self.html, date(2026, 6, 17))
         self.assertEqual(result, date(2026, 6, 17))
+
+
+class TestFetchNextSep(unittest.TestCase):
+    def test_uses_parsed_date_when_fetch_succeeds(self):
+        from sep_analyzer import fetch_next_sep
+        fake_html = (
+            "<html><body>"
+            "<h3>2026 FOMC Meetings</h3>"
+            "<div class='fomc-meeting__month'><strong>June</strong></div>"
+            "<div class='fomc-meeting__date'>16-17</div>"
+            "<div class='fomc-meeting__month'><strong>September</strong></div>"
+            "<div class='fomc-meeting__date'>15-16</div>"
+            "</body></html>"
+        )
+        with patch("sep_analyzer._fetch_calendar_html", return_value=fake_html):
+            result = fetch_next_sep(today=date(2026, 4, 23))
+        self.assertEqual(result, date(2026, 6, 17))
+
+    def test_uses_fallback_when_fetch_raises(self):
+        from sep_analyzer import fetch_next_sep
+        with patch("sep_analyzer._fetch_calendar_html",
+                   side_effect=OSError("network down")):
+            result = fetch_next_sep(today=date(2026, 4, 23))
+        self.assertEqual(result, date(2026, 6, 17))
+
+    def test_uses_fallback_when_parse_returns_none(self):
+        from sep_analyzer import fetch_next_sep
+        with patch("sep_analyzer._fetch_calendar_html",
+                   return_value="<html></html>"):
+            result = fetch_next_sep(today=date(2026, 4, 23))
+        self.assertEqual(result, date(2026, 6, 17))
+
+    def test_raises_when_fallback_exhausted(self):
+        from sep_analyzer import fetch_next_sep
+        far_future = date(2100, 1, 1)
+        with patch("sep_analyzer._fetch_calendar_html",
+                   side_effect=OSError("boom")):
+            with self.assertRaises(RuntimeError):
+                fetch_next_sep(today=far_future)
 
 
 if __name__ == "__main__":

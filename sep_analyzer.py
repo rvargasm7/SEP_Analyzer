@@ -17,6 +17,7 @@ import os
 import json
 import argparse
 import getpass
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Optional
@@ -129,6 +130,41 @@ def _parse_next_sep_date(html: str, today: date) -> Optional[date]:
     if not candidates:
         return None
     return min(candidates)
+
+
+def _fetch_calendar_html(url: str = CALENDAR_URL, timeout: float = 10.0) -> str:
+    """Fetch the Fed FOMC calendar page. Raises OSError on network error."""
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def fetch_next_sep(today=None):
+    """
+    Return the next SEP-producing FOMC meeting date (today or later).
+
+    Tries the live Fed calendar first. On fetch failure, parse failure,
+    or an empty parse result, falls back to SEP_FALLBACK_DATES. If the
+    fallback is also exhausted, raises RuntimeError.
+    """
+    if today is None:
+        today = date.today()
+
+    try:
+        html = _fetch_calendar_html()
+        parsed = _parse_next_sep_date(html, today)
+        if parsed is not None:
+            return parsed
+    except (OSError, ValueError):
+        pass
+
+    for d in SEP_FALLBACK_DATES:
+        if d >= today:
+            return d
+
+    raise RuntimeError(
+        "No future SEP meeting found. Update SEP_FALLBACK_DATES in "
+        "sep_analyzer.py with the next year's FOMC schedule."
+    )
 
 
 # ── BASELINE (December 2025 SEP) ─────────────────────────────────────────────
