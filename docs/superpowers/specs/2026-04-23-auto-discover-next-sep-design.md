@@ -32,11 +32,11 @@ silently.
   3. Filter to meetings whose date is today-or-later AND whose month is
      Mar/Jun/Sep/Dec.
   4. Return the earliest such `datetime.date`.
-- **Fallback:** if fetch or parse fails, return the earliest
-  today-or-later date from a hardcoded list covering 2026–2027
-  meeting dates. If that list is also exhausted, raise a
-  `RuntimeError` with a message instructing the user to update the
-  fallback list.
+- **Fallback:** if the fetch raises, the parser finds no dates, or
+  every parsed date is in the past, return the earliest today-or-later
+  date from a hardcoded list covering 2026–2027 meeting dates. If
+  the fallback list is also exhausted, raise a `RuntimeError` with a
+  message instructing the user to update the list.
 - **Network timeout:** 10 seconds; on timeout, use the fallback.
 
 ### 2. CLI entry point — `--discover` flag in `sep_analyzer.py`
