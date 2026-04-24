@@ -6,7 +6,29 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-PYTHON="/opt/anaconda3/bin/python3"
+# Pick the first interpreter that has both required packages installed.
+# Honors $PYTHON override; otherwise tries common candidates.
+pick_python() {
+    if [ -n "$PYTHON" ]; then
+        echo "$PYTHON"
+        return
+    fi
+    for cand in \
+        "$DIR/.venv/bin/python" \
+        "python3" \
+        "/opt/anaconda3/bin/python3" \
+        "/usr/bin/python3"
+    do
+        if command -v "$cand" >/dev/null 2>&1 && \
+           "$cand" -c "import anthropic, pdfplumber" >/dev/null 2>&1; then
+            echo "$cand"
+            return
+        fi
+    done
+    # Nothing works — fall back to python3 so user sees the clear error message.
+    echo "python3"
+}
+PYTHON="$(pick_python)"
 
 # Load API key: .env file → environment → interactive prompt
 if [ -z "$ANTHROPIC_API_KEY" ] && [ -f .env ]; then
@@ -27,6 +49,14 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
     export ANTHROPIC_API_KEY
     echo "  Key set for this session."
     echo ""
+fi
+
+# --demo (and any trailing args like --tickers) skips discovery and runs
+# the analyzer directly against mock SEP data.
+if [ "$1" = "--demo" ]; then
+    shift
+    "$PYTHON" sep_analyzer.py --demo "$@"
+    exit $?
 fi
 
 # Discover the next SEP-producing FOMC meeting.

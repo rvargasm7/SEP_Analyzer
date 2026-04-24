@@ -22,19 +22,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Optional
 
-try:
-    import pdfplumber
-except ImportError:
-    print("Run: pip install pdfplumber anthropic")
-    sys.exit(1)
-
-try:
-    import anthropic
-except ImportError:
-    print("Run: pip install anthropic")
-    sys.exit(1)
-
-
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
@@ -335,6 +322,11 @@ class SEPReading:
 
 # ── PDF EXTRACTION ────────────────────────────────────────────────────────────
 def extract_pdf_text(path: str) -> str:
+    try:
+        import pdfplumber
+    except ImportError:
+        print("pdfplumber not installed. Run: pip install pdfplumber")
+        sys.exit(1)
     text_parts = []
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
@@ -485,7 +477,10 @@ def score_deltas(reading: SEPReading, baseline: dict) -> dict:
     def safe_delta(new_val, baseline_key, direction="lower_is_bullish"):
         if new_val is None:
             return 0, "not found"
-        delta = new_val - b[baseline_key]
+        prev = b.get(baseline_key)
+        if prev is None:
+            return 0, "no prior baseline"
+        delta = new_val - prev
         if direction == "lower_is_bullish":
             score = -delta * 10  # negative delta = bullish
         else:
@@ -532,13 +527,32 @@ def score_deltas(reading: SEPReading, baseline: dict) -> dict:
 
 
 # ── CLAUDE SYNTHESIS ──────────────────────────────────────────────────────────
-def synthesize_with_claude(reading: SEPReading, scores: dict, raw_text: str, baseline: dict) -> str:
+def synthesize_with_claude(
+    reading: SEPReading,
+    scores: dict,
+    raw_text: str,
+    baseline: dict,
+    tickers: Optional[list] = None,
+) -> str:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         return "[Set ANTHROPIC_API_KEY env variable for AI synthesis]"
 
+    try:
+        import anthropic
+    except ImportError:
+        return "[anthropic package not installed — run: pip install anthropic]"
+
     client = anthropic.Anthropic(api_key=api_key)
-# One thing to note. In line 439 Portfolio Implications: (Switch to your ticker list if you want them analyzed)
+
+    if tickers:
+        portfolio_line = (
+            f"5. PORTFOLIO IMPLICATIONS: specific to a speculative portfolio with positions in "
+            f"{', '.join(tickers)}"
+        )
+    else:
+        portfolio_line = "5. PORTFOLIO IMPLICATIONS: general equity, rates, and FX positioning"
+
     context = f"""
 You are a macro trader reading the Fed's Summary of Economic Projections (SEP) the moment it drops.
 
@@ -570,17 +584,20 @@ Provide a rapid trading-desk analysis:
 2. CONFIDENCE: percentage
 3. TOP 3 SIGNALS: the three most market-moving things in this SEP
 4. IMMEDIATE IMPACT: what happens to S&P, 10Y yield, dollar, and gold in the next 60 minutes
-5. PORTFOLIO IMPLICATIONS: specific to a speculative portfolio with positions in USAR, TGT, SPY, TLT, UPS, XOM, NVDA, META
+{portfolio_line}
 6. WATCH LIST: one sentence on what to monitor in Powell's press conference
 
 Be direct, rapid, and specific. No hedging. Trader language.
 """
 
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=1000,
-        messages=[{"role": "user", "content": context}]
-    )
+    try:
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=1000,
+            messages=[{"role": "user", "content": context}]
+        )
+    except Exception as e:
+        return f"[AI synthesis failed: {type(e).__name__}: {e}. Parsed numbers and scores above are still valid.]"
     return response.content[0].text
 
 
@@ -630,7 +647,12 @@ driven by energy passthrough effects and continued stickiness in services prices
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def analyze(text: str, source_label: str = "SEP", save: bool = True) -> None:
+def analyze(
+    text: str,
+    source_label: str = "SEP",
+    save: bool = True,
+    tickers: Optional[list] = None,
+) -> None:
     print(f"\n{'='*60}")
     print(f"  SEP ANALYZER — {source_label}")
     print(f"{'='*60}\n")
@@ -703,16 +725,26 @@ def analyze(text: str, source_label: str = "SEP", save: bool = True) -> None:
     print(f"  SIGNAL:          {verdict_color} {verdict}")
     print(f"{'─'*55}\n")
 
+    # Save the parsed reading + scores BEFORE the network call, so a crash
+    # or SIGKILL during AI synthesis doesn't throw away the extraction work.
+    if save:
+        run_dir = save_run(reading, scores, "[pending AI synthesis]", source_label)
+
     # Claude synthesis
     print("► Running AI synthesis...\n")
-    analysis = synthesize_with_claude(reading, scores, text, baseline)
+    analysis = synthesize_with_claude(reading, scores, text, baseline, tickers=tickers)
     print("─── TRADER DESK ANALYSIS ────────────────────────────────")
     print(analysis)
     print(f"\n{'='*60}\n")
 
-    # Save run
+    # Update the saved run with the completed analysis.
     if save:
-        save_run(reading, scores, analysis, source_label)
+        out_path = os.path.join(run_dir, "output.json")
+        with open(out_path) as f:
+            saved = json.load(f)
+        saved["ai_analysis"] = analysis
+        with open(out_path, "w") as f:
+            json.dump(saved, f, indent=2)
 
 
 def ensure_api_key():
@@ -748,7 +780,13 @@ def main():
         action="store_true",
         help="Print next SEP date (NOT_TODAY <date>) or poll URL (POLL <url> <filename>) and exit",
     )
+    parser.add_argument(
+        "--tickers",
+        help="Comma-separated tickers for portfolio implications (e.g. SPY,TLT,NVDA). "
+             "If omitted, AI gives general positioning.",
+    )
     args = parser.parse_args()
+    tickers = [t.strip() for t in args.tickers.split(",")] if args.tickers else None
 
     if args.discover:
         _discover_command()
@@ -757,10 +795,10 @@ def main():
     ensure_api_key()
 
     if args.demo:
-        analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP")
+        analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP", tickers=tickers)
 
     elif args.text:
-        analyze(args.text, "PASTED TEXT")
+        analyze(args.text, "PASTED TEXT", tickers=tickers)
 
     elif args.pdf:
         if not os.path.exists(args.pdf):
@@ -771,12 +809,12 @@ def main():
         if not text.strip():
             print("Could not extract text from PDF. Try --text with copy-pasted content.")
             sys.exit(1)
-        analyze(text, args.pdf)
+        analyze(text, args.pdf, tickers=tickers)
 
     else:
         print(__doc__)
         print("\nRunning demo mode...\n")
-        analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP")
+        analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP", tickers=tickers)
 
 
 def _discover_command() -> None:
