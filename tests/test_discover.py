@@ -33,18 +33,29 @@ class TestParser(unittest.TestCase):
         from sep_analyzer import _parse_next_sep_date
         self.assertIsNone(_parse_next_sep_date("", date(2026, 1, 1)))
 
-    def test_returns_sep_month_only(self):
+    def test_returns_none_when_no_year_headings(self):
         from sep_analyzer import _parse_next_sep_date
-        result = _parse_next_sep_date(self.html, date(2026, 1, 1))
-        self.assertIsNotNone(result)
-        self.assertIn(result.month, {3, 6, 9, 12})
+        self.assertIsNone(_parse_next_sep_date("<html>nothing</html>", date(2026, 1, 1)))
 
-    def test_returns_date_on_or_after_today(self):
+    def test_returns_none_when_no_future_sep(self):
         from sep_analyzer import _parse_next_sep_date
-        today = date(2026, 4, 1)
-        result = _parse_next_sep_date(self.html, today)
-        self.assertIsNotNone(result)
-        self.assertGreaterEqual(result, today)
+        self.assertIsNone(_parse_next_sep_date(self.html, date(2030, 1, 1)))
+
+    def test_returns_first_future_sep_from_april(self):
+        from sep_analyzer import _parse_next_sep_date
+        result = _parse_next_sep_date(self.html, date(2026, 4, 1))
+        self.assertEqual(result, date(2026, 6, 17))
+
+    def test_advances_after_a_meeting_passes(self):
+        from sep_analyzer import _parse_next_sep_date
+        result = _parse_next_sep_date(self.html, date(2026, 6, 18))
+        self.assertEqual(result, date(2026, 9, 16))
+
+    def test_meeting_day_itself_qualifies(self):
+        # >= today, not > today: today == meeting day should return that day.
+        from sep_analyzer import _parse_next_sep_date
+        result = _parse_next_sep_date(self.html, date(2026, 6, 17))
+        self.assertEqual(result, date(2026, 6, 17))
 
 
 if __name__ == "__main__":

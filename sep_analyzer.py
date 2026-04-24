@@ -95,7 +95,8 @@ def _parse_next_sep_date(html: str, today: date) -> Optional[date]:
     # like "*" or footnote markers).
     pair_pattern = re.compile(
         r'fomc-meeting__month[^>]*>\s*<strong>([A-Za-z/]+)</strong>\s*</div>'
-        r'.*?fomc-meeting__date[^>]*>\s*(\d{1,2})\s*[-–]\s*(\d{1,2})',
+        r'(?:(?!fomc-meeting__month).)*?'
+        r'fomc-meeting__date[^>]*>\s*(\d{1,2})\s*[-–]\s*(\d{1,2})',
         re.DOTALL | re.IGNORECASE,
     )
 
