@@ -2,6 +2,8 @@
 import unittest
 from datetime import date
 import os
+import subprocess
+import sys
 from unittest.mock import patch
 
 FIXTURE_PATH = os.path.join(
@@ -96,6 +98,35 @@ class TestFetchNextSep(unittest.TestCase):
                    side_effect=OSError("boom")):
             with self.assertRaises(RuntimeError):
                 fetch_next_sep(today=far_future)
+
+
+class TestDiscoverCLI(unittest.TestCase):
+    def _run(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return subprocess.run(
+            [sys.executable, "sep_analyzer.py", "--discover"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_discover_exits_zero(self):
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_discover_emits_single_line(self):
+        result = self._run()
+        lines = [l for l in result.stdout.splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1, f"expected one line, got: {lines}")
+
+    def test_discover_line_has_expected_prefix(self):
+        result = self._run()
+        line = result.stdout.strip().splitlines()[-1]
+        self.assertTrue(
+            line.startswith("NOT_TODAY ") or line.startswith("POLL "),
+            f"unexpected prefix: {line!r}",
+        )
 
 
 if __name__ == "__main__":

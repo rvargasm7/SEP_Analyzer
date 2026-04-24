@@ -739,7 +739,16 @@ def main():
     parser.add_argument("pdf", nargs="?", help="Path to SEP PDF file")
     parser.add_argument("--text", help="Raw text instead of PDF")
     parser.add_argument("--demo", action="store_true", help="Run with demo data")
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="Print next SEP date (NOT_TODAY <date>) or poll URL (POLL <url> <filename>) and exit",
+    )
     args = parser.parse_args()
+
+    if args.discover:
+        _discover_command()
+        return
 
     ensure_api_key()
 
@@ -764,6 +773,22 @@ def main():
         print(__doc__)
         print("\nRunning demo mode...\n")
         analyze(DEMO_SEP_TEXT, "DEMO — March 2026 Mock SEP")
+
+
+def _discover_command() -> None:
+    """Print a single-line directive for run_sep.sh and exit."""
+    next_date = fetch_next_sep()
+    today = date.today()
+    if next_date == today:
+        yyyymmdd = next_date.strftime("%Y%m%d")
+        url = (
+            "https://www.federalreserve.gov/monetarypolicy/files/"
+            f"fomcprojtabl{yyyymmdd}.pdf"
+        )
+        filename = f"sep_{yyyymmdd}.pdf"
+        print(f"POLL {url} {filename}")
+    else:
+        print(f"NOT_TODAY {next_date.isoformat()}")
 
 
 if __name__ == "__main__":
