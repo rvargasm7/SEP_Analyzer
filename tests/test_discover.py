@@ -129,5 +129,56 @@ class TestDiscoverCLI(unittest.TestCase):
         )
 
 
+class TestDiscoverCommand(unittest.TestCase):
+    """Unit tests for _discover_command output formatting (no subprocess)."""
+
+    def test_poll_line_format_when_today_is_meeting_day(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        import sep_analyzer
+
+        meeting_day = date(2026, 6, 17)
+        with patch("sep_analyzer.fetch_next_sep", return_value=meeting_day), \
+             patch("sep_analyzer.date") as mock_date:
+            mock_date.today.return_value = meeting_day
+            # Calls like date(2026, 6, 17) inside the function still need to work
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            buf = StringIO()
+            with redirect_stdout(buf):
+                sep_analyzer._discover_command()
+
+        self.assertEqual(
+            buf.getvalue().strip(),
+            "POLL https://www.federalreserve.gov/monetarypolicy/files/"
+            "fomcprojtabl20260617.pdf sep_20260617.pdf",
+        )
+
+    def test_not_today_line_format_when_today_is_before_meeting(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        import sep_analyzer
+
+        meeting_day = date(2026, 6, 17)
+        today_value = date(2026, 4, 23)
+        with patch("sep_analyzer.fetch_next_sep", return_value=meeting_day), \
+             patch("sep_analyzer.date") as mock_date:
+            mock_date.today.return_value = today_value
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            buf = StringIO()
+            with redirect_stdout(buf):
+                sep_analyzer._discover_command()
+
+        self.assertEqual(buf.getvalue().strip(), "NOT_TODAY 2026-06-17")
+
+    def test_runtime_error_exits_with_code_2(self):
+        import sep_analyzer
+
+        with patch("sep_analyzer.fetch_next_sep",
+                   side_effect=RuntimeError("fallback exhausted")):
+            with self.assertRaises(SystemExit) as cm:
+                sep_analyzer._discover_command()
+        self.assertEqual(cm.exception.code, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

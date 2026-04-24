@@ -134,7 +134,11 @@ def _parse_next_sep_date(html: str, today: date) -> Optional[date]:
 
 def _fetch_calendar_html(url: str = CALENDAR_URL, timeout: float = 10.0) -> str:
     """Fetch the Fed FOMC calendar page. Raises OSError on network error."""
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "SEP-Analyzer/1.0 (+sep_analyzer.py)"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", errors="replace")
 
 
@@ -777,7 +781,12 @@ def main():
 
 def _discover_command() -> None:
     """Print a single-line directive for run_sep.sh and exit."""
-    next_date = fetch_next_sep()
+    try:
+        next_date = fetch_next_sep()
+    except RuntimeError as e:
+        print(f"DISCOVERY_ERROR {e}", file=sys.stderr)
+        sys.exit(2)
+
     today = date.today()
     if next_date == today:
         yyyymmdd = next_date.strftime("%Y%m%d")
