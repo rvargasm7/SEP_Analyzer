@@ -18,7 +18,7 @@ import json
 import argparse
 import getpass
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 
 try:
@@ -36,6 +36,34 @@ except ImportError:
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
+
+# ── SEP DISCOVERY ─────────────────────────────────────────────────────────────
+# The Fed releases a Summary of Economic Projections at the March, June,
+# September, and December FOMC meetings. These are two-day meetings; the
+# SEP drops on the final day.
+SEP_MONTHS = {3, 6, 9, 12}
+
+MONTH_NAMES = {
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "may": 5, "june": 6, "july": 7, "august": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12,
+}
+
+# Hardcoded fallback — used only when the live calendar page can't be
+# fetched or parsed. Update this list each time the Fed publishes a new
+# year's FOMC schedule. Each date is the final day of a two-day SEP meeting.
+SEP_FALLBACK_DATES = [
+    date(2026, 3, 18),
+    date(2026, 6, 17),
+    date(2026, 9, 16),
+    date(2026, 12, 9),
+    date(2027, 3, 17),
+    date(2027, 6, 9),
+    date(2027, 9, 15),
+    date(2027, 12, 8),
+]
+
+CALENDAR_URL = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
 
 # ── BASELINE (December 2025 SEP) ─────────────────────────────────────────────
 # Update this section after each SEP release becomes the new baseline.
